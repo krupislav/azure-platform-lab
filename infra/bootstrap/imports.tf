@@ -23,12 +23,26 @@ import {
   id = "${local.sa_id}/blobServices/default/containers/tfstate"
 }
 
+# Nov 24: access moved from users to groups (built in the portal, imported here).
+# The old direct user roles were deleted by hand. The lock was deleted too,
+# so it has no import block: Terraform creates it again.
+
 import {
-  to = azurerm_role_assignment.state_data_contributor
-  id = "${local.sa_id}/providers/Microsoft.Authorization/roleAssignments/d2a9a1c4-12a0-4942-bef5-f9f57efa68bd"
+  to = azuread_group.tfstate_admins
+  id = "/groups/5bb6bfc9-d347-4d5a-8714-d83266f564b6"
 }
 
 import {
-  to = azurerm_management_lock.tfstate
-  id = "${local.sa_id}/providers/Microsoft.Authorization/locks/lock-tfstate"
+  to = azuread_group.tfstate_readers
+  id = "/groups/e1e24416-2b23-4b0d-b703-34a7292a9c43"
+}
+
+import {
+  to = azurerm_role_assignment.tfstate_admins
+  id = "${local.sa_id}/providers/Microsoft.Authorization/roleAssignments/1d4f639b-38de-41cc-aef1-9beb16c9c79c"
+}
+
+import {
+  to = azurerm_role_assignment.tfstate_readers
+  id = "${local.sa_id}/blobServices/default/containers/tfstate/providers/Microsoft.Authorization/roleAssignments/90ee9b23-47f6-42aa-866c-a745420d3248"
 }

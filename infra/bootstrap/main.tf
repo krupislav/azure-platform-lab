@@ -60,11 +60,34 @@ resource "azurerm_storage_container" "tfstate" {
   container_access_type = "private"
 }
 
-# Data-plane access for whoever runs the bootstrap (Tomas). Owner alone can't read blobs.
-resource "azurerm_role_assignment" "state_data_contributor" {
+# --- Access to the state: roles go to groups, people go into groups ---
+# Terraform owns the groups and their roles. WHO is in a group is not managed here:
+# membership is an identity process (portal / access request), so joiners and
+# leavers never need a code change. Owner alone can't read blobs, so data-plane
+# roles are needed.
+
+resource "azuread_group" "tfstate_admins" {
+  display_name     = "sg-tfstate-admins"
+  security_enabled = true
+}
+
+resource "azuread_group" "tfstate_readers" {
+  display_name     = "sg-tfstate-readers"
+  security_enabled = true
+}
+
+# Read/write on the whole account (admins may add containers later).
+resource "azurerm_role_assignment" "tfstate_admins" {
   scope                = azurerm_storage_account.tfstate.id
   role_definition_name = "Storage Blob Data Contributor"
-  principal_id         = data.azurerm_client_config.current.object_id
+  principal_id         = azuread_group.tfstate_admins.object_id
+}
+
+# Read-only, and only the tfstate container (least privilege).
+resource "azurerm_role_assignment" "tfstate_readers" {
+  scope                = azurerm_storage_container.tfstate.id
+  role_definition_name = "Storage Blob Data Reader"
+  principal_id         = azuread_group.tfstate_readers.object_id
 }
 
 # Azure-side protection: nobody (not even Owner or a pipeline) can delete the account

@@ -9,6 +9,12 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 4.0" # any 4.x, never 5.x without us choosing it
     }
+    # Entra ID (users, groups, apps) is a different API (Microsoft Graph),
+    # so it needs its own provider.
+    azuread = {
+      source  = "hashicorp/azuread"
+      version = "~> 3.0"
+    }
   }
 
   # Remote state. The bootstrap layer stores its own state in the account it manages.

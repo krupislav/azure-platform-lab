@@ -10,6 +10,11 @@ provider "azurerm" {
   storage_use_azuread = true
 }
 
+# Entra ID. No options needed: it signs in the same way as azurerm (az login)
+# and takes the tenant from that session.
+provider "azuread" {}
+
 # Who is running Terraform right now (tenant, subscription, object ID).
-# Used so the code never hard-codes IDs.
+# Only used for the subscription ID in imports.tf, never as a principal:
+# "current" is whoever runs it (you on your PC, a pipeline identity in CI).
 data "azurerm_client_config" "current" {}
