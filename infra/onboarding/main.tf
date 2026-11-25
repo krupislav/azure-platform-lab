@@ -21,7 +21,7 @@ locals {
 
   # GitHub OIDC subject prefix. This repo uses ID-based ("immutable") subjects:
   # owner@ownerID/repo@repoID. Both IDs are public, not secrets.
-  github_subject = "repo:krupislav@63015131/azure-platform-lab@1469173614"
+  github_subject = "repo:krupislav@63015131/azure-platform-envs@1472219283"
 }
 
 data "azurerm_resource_group" "hub" {
