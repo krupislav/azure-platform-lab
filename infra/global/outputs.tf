@@ -28,3 +28,8 @@ output "acr_id" {
 output "acr_login_server" {
   value = azurerm_container_registry.shared.login_server
 }
+
+# The app CI workflow needs this as its AZURE_CLIENT_ID (stored as a repo secret).
+output "github_acr_client_id" {
+  value = azurerm_user_assigned_identity.github_acr.client_id
+}
