@@ -32,6 +32,10 @@ locals {
     "privatelink.blob.core.windows.net", # blob storage
     "privatelink.vaultcore.azure.net",   # key vault
   ]
+
+  # GitHub OIDC subject prefix. This repo uses ID-based ("immutable") subjects:
+  # owner@ownerID/repo@repoID. Both IDs are public, not secrets.
+  github_subject = "repo:krupislav@63015131/azure-platform-envs@1472219283"
 }
 
 # ---------- Network (rg-hub-cc) ----------
@@ -113,4 +117,32 @@ resource "azurerm_container_registry" "shared" {
   sku                 = "Basic"
   admin_enabled       = false # no admin user: identities, not passwords
   tags                = local.tags
+}
+
+# ---------- Image push identity (rg-shared-cc) ----------
+# ONE identity pushes images to acrshared0 for all environments (build once, promote).
+# Used by the app CI workflow in azure-platform-envs, only after a merge to main.
+# Created here, by an admin: the pipeline never grants itself AcrPush.
+
+resource "azurerm_user_assigned_identity" "github_acr" {
+  name                = "id-github-acr"
+  resource_group_name = azurerm_resource_group.shared.name
+  location            = local.location
+  tags                = local.tags
+}
+
+# GitHub logs in as id-github-acr with no password: Azure trusts the OIDC token
+# when its subject matches. Same repo format as in onboarding.
+resource "azurerm_federated_identity_credential" "github_acr_main" {
+  name                      = "fc-main"
+  user_assigned_identity_id = azurerm_user_assigned_identity.github_acr.id
+  issuer                    = "https://token.actions.githubusercontent.com"
+  audience                  = ["api://AzureADTokenExchange"]
+  subject                   = "${local.github_subject}:ref:refs/heads/main"
+}
+
+resource "azurerm_role_assignment" "github_acr_push" {
+  scope                = azurerm_container_registry.shared.id
+  role_definition_name = "AcrPush"
+  principal_id         = azurerm_user_assigned_identity.github_acr.principal_id
 }
