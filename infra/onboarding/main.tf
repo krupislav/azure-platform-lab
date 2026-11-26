@@ -28,6 +28,12 @@ data "azurerm_resource_group" "hub" {
   name = local.hub_rg_name
 }
 
+# Shared registry (global layer): each environment's nodes pull from it.
+data "azurerm_container_registry" "shared" {
+  name                = "acrshared0"
+  resource_group_name = "rg-shared-cc"
+}
+
 # ---------- The empty resource group handed to the environment ----------
 
 resource "azurerm_resource_group" "env" {
@@ -135,4 +141,72 @@ resource "azurerm_role_assignment" "kv_readers" {
   scope                = azurerm_resource_group.env[each.key].id
   role_definition_name = "Key Vault Reader"
   principal_id         = azuread_group.kv_readers[each.key].object_id
+}
+
+# ---------- AKS identities and roles (used by the workloads layer) ----------
+# The cluster is built by the env pipeline (Contributor), which can't assign roles.
+# So the identities and their roles are prepared here, before the cluster exists.
+# Scopes are the env's RG where the target doesn't exist yet (subnet, cluster).
+
+# Control plane: places nodes and load balancers in the env's network.
+resource "azurerm_user_assigned_identity" "aks" {
+  for_each = local.environments
+
+  name                = "id-aks-${each.key}"
+  resource_group_name = azurerm_resource_group.env[each.key].name
+  location            = local.location
+  tags                = { env = each.key }
+}
+
+# Kubelet: the identity on the nodes; pulls images.
+resource "azurerm_user_assigned_identity" "kubelet" {
+  for_each = local.environments
+
+  name                = "id-aks-kubelet-${each.key}"
+  resource_group_name = azurerm_resource_group.env[each.key].name
+  location            = local.location
+  tags                = { env = each.key }
+}
+
+# Join snet-aks and create load balancers / public IPs (the subnet doesn't exist yet).
+resource "azurerm_role_assignment" "aks_network" {
+  for_each = local.environments
+
+  scope                = azurerm_resource_group.env[each.key].id
+  role_definition_name = "Network Contributor"
+  principal_id         = azurerm_user_assigned_identity.aks[each.key].principal_id
+}
+
+# Lets the control plane hand the kubelet identity to the nodes.
+resource "azurerm_role_assignment" "aks_kubelet_operator" {
+  for_each = local.environments
+
+  scope                = azurerm_user_assigned_identity.kubelet[each.key].id
+  role_definition_name = "Managed Identity Operator"
+  principal_id         = azurerm_user_assigned_identity.aks[each.key].principal_id
+}
+
+# Nodes pull images from the shared registry.
+resource "azurerm_role_assignment" "kubelet_acr_pull" {
+  for_each = local.environments
+
+  scope                = data.azurerm_container_registry.shared.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_user_assigned_identity.kubelet[each.key].principal_id
+}
+
+# People who may run kubectl. Membership by hand, like the Key Vault groups.
+resource "azuread_group" "aks_admins" {
+  for_each = local.environments
+
+  display_name     = "sg-aks-${each.key}-admins"
+  security_enabled = true
+}
+
+resource "azurerm_role_assignment" "aks_admins" {
+  for_each = local.environments
+
+  scope                = azurerm_resource_group.env[each.key].id
+  role_definition_name = "Azure Kubernetes Service RBAC Cluster Admin"
+  principal_id         = azuread_group.aks_admins[each.key].object_id
 }
