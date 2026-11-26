@@ -57,6 +57,9 @@ Resource group `rg-shared-cc` (shared services):
 
 - Log Analytics workspace `log-shared-cc`: all environments send logs here.
 - Container registry `acrshared0`: an image is built once and promoted between environments.
+- Push identity `id-github-acr`: the only identity that may push images, with AcrPush on
+  `acrshared0` only. Its federated credential `fc-main` trusts the env repo's `main` branch
+  only (subject `...:ref:refs/heads/main`), so a PR can never push an image.
 
 ### 3. onboarding: a new environment's front door
 
@@ -71,6 +74,12 @@ For each environment in `local.environments` (today: `dev`):
 | Network Contributor on `rg-hub-cc` | The spoke's peering and DNS links live in the hub's RG |
 | Membership in `sg-tfstate-admins` | So the pipeline can read and write its state |
 | Groups `sg-kv-<env>-admins` and `-readers`, with Key Vault roles on the RG | Creating groups needs Graph rights |
+| AKS control plane identity `id-aks-<env>`: Network Contributor on `rg-<env>-cc`, Managed Identity Operator on the kubelet identity | Role assignments. Scoped to the RG because the subnet and cluster don't exist yet. |
+| AKS kubelet identity `id-aks-kubelet-<env>`: AcrPull on `acrshared0` | The nodes' identity belongs to one env, even though the registry is shared |
+| Group `sg-aks-<env>-admins`: AKS RBAC Cluster Admin on the RG | Who may run `kubectl` (Entra sign-in, no local accounts) |
+
+The AKS identities are created here, not by the portal's defaults, so their roles are
+reviewed in a PR and **survive the nightly destroy** of the cluster.
 
 **Group membership is not in Terraform.** Terraform creates the groups and their
 roles. Adding or removing people is an admin task done after onboarding, so joiners
@@ -112,10 +121,12 @@ Each layer is something the layers after it depend on:
 | **1. bootstrap**<br>(admin, by hand) | `sttfstate0` + `tfstate` container<br>`sg-tfstate-admins` / `-readers` | **A place for every state file:** global, onboarding and dev all keep their state here.<br>**The tfstate admins group:** onboarding adds the pipeline identity to it, so the pipeline can read and write `dev.tfstate`. | No layer can `terraform init`, because there's nowhere to keep or lock state. |
 | **2. global**<br>(admin) | `rg-hub-cc`: hub VNet, private DNS zones<br>`rg-shared-cc`: Log Analytics, `acrshared0` | **To onboarding:** `rg-hub-cc` exists, so it can give the pipeline Network Contributor there.<br>**To dev:** the hub VNet to peer with, the DNS zones to link and to register the Key Vault record in, and later ACR for images and Log Analytics for logs. | dev can't peer or resolve `privatelink` names, and every spoke would build its own copy. |
 | **3. onboarding**<br>(admin rights) | `rg-dev-cc`<br>`id-github-dev` + `fc-pr`, `fc-env-dev`<br>Contributor on rg-dev, Network Contributor on rg-hub<br>membership in `sg-tfstate-admins`<br>`sg-kv-dev-admins` / `-readers` + Key Vault roles | **To dev's pipeline:** an empty RG to build in, an identity GitHub can log in as with no password, and exactly the rights it needs: build in rg-dev, add peering and DNS links in rg-hub, write its state.<br>**To people:** the groups are already set up to reach the vault once it exists. | The pipeline can't log in, has nowhere to build, and can't grant itself rights, because Contributor can't assign roles. |
-| **4. dev**<br>(pipeline, in azure-platform-envs) | spoke VNet, subnets, NSGs, peering, DNS links, Key Vault + private endpoint | **To workloads (next):** a network to run in, a private Key Vault for secrets, and a path to the hub. | Nothing to deploy the app into. |
+| **4. dev**<br>(pipeline, in azure-platform-envs) | spoke VNet, subnets, NSGs, peering, DNS links, Key Vault + private endpoint | **To workloads:** `snet-aks` for the nodes, a private Key Vault for secrets, and a path to the hub. | Nothing to deploy the app into. |
+| **5. dev workloads**<br>(pipeline, in azure-platform-envs) | AKS cluster `aks-dev-cc` (Azure adds the `MC_` node RG) | **To the app:** nodes that pull from `acrshared0` with the kubelet identity, and a load balancer for its Service. | The app has an image but nowhere to run. |
 
 In short, each layer sets up something the next one needs:
 - **bootstrap**: *where* state lives
 - **global**: *what* is shared
 - **onboarding**: *who* may build, and *where*
-- **dev**: *what* the app runs on
+- **dev**: *where* the app's network and secrets are
+- **dev workloads**: *what* the app runs on (destroyed when not in use)
