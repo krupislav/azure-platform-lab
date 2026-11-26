@@ -102,3 +102,20 @@ terraform apply
 - No pipeline here yet. Planned: a locked-down platform pipeline with approvals, plus a
   scheduled drift check (`plan -detailed-exitcode`).
 - No branch protection on `main` yet.
+
+## How the layers build on each other
+
+Each layer is something the layers after it depend on:
+
+| Layer | What it creates | What it gives the layers after it | What breaks without it |
+|---|---|---|---|
+| **1. bootstrap**<br>(admin, by hand) | `sttfstate0` + `tfstate` container<br>`sg-tfstate-admins` / `-readers` | **A place for every state file:** global, onboarding and dev all keep their state here.<br>**The tfstate admins group:** onboarding adds the pipeline identity to it, so the pipeline can read and write `dev.tfstate`. | No layer can `terraform init`, because there's nowhere to keep or lock state. |
+| **2. global**<br>(admin) | `rg-hub-cc`: hub VNet, private DNS zones<br>`rg-shared-cc`: Log Analytics, `acrshared0` | **To onboarding:** `rg-hub-cc` exists, so it can give the pipeline Network Contributor there.<br>**To dev:** the hub VNet to peer with, the DNS zones to link and to register the Key Vault record in, and later ACR for images and Log Analytics for logs. | dev can't peer or resolve `privatelink` names, and every spoke would build its own copy. |
+| **3. onboarding**<br>(admin rights) | `rg-dev-cc`<br>`id-github-dev` + `fc-pr`, `fc-env-dev`<br>Contributor on rg-dev, Network Contributor on rg-hub<br>membership in `sg-tfstate-admins`<br>`sg-kv-dev-admins` / `-readers` + Key Vault roles | **To dev's pipeline:** an empty RG to build in, an identity GitHub can log in as with no password, and exactly the rights it needs: build in rg-dev, add peering and DNS links in rg-hub, write its state.<br>**To people:** the groups are already set up to reach the vault once it exists. | The pipeline can't log in, has nowhere to build, and can't grant itself rights, because Contributor can't assign roles. |
+| **4. dev**<br>(pipeline, in azure-platform-envs) | spoke VNet, subnets, NSGs, peering, DNS links, Key Vault + private endpoint | **To workloads (next):** a network to run in, a private Key Vault for secrets, and a path to the hub. | Nothing to deploy the app into. |
+
+In short, each layer sets up something the next one needs:
+- **bootstrap**: *where* state lives
+- **global**: *what* is shared
+- **onboarding**: *who* may build, and *where*
+- **dev**: *what* the app runs on
